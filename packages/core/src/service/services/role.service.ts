@@ -17,6 +17,7 @@ import { unique } from '@vendure/common/lib/unique';
 
 import { RequestContext } from '../../api/common/request-context';
 import { RelationPaths } from '../../api/decorators/relations.decorator';
+import { RequestContextCacheService } from '../../cache/request-context-cache.service';
 import { getAllPermissionsMetadata } from '../../common/constants';
 import {
     EntityNotFoundError,
@@ -56,6 +57,7 @@ export class RoleService {
         private listQueryBuilder: ListQueryBuilder,
         private configService: ConfigService,
         private eventBus: EventBus,
+        private requestContextCache: RequestContextCacheService,
     ) {}
 
     async initRoles() {
@@ -209,15 +211,21 @@ export class RoleService {
         if (ctx.activeUserId == null) {
             return [];
         }
-        const user = await this.connection.getEntityOrThrow(ctx, User, ctx.activeUserId, {
-            relations: ['roles', 'roles.channels'],
+        
+        const cacheKey = `user-permissions-${ctx.activeUserId}-${channelId}`;
+        
+        return this.requestContextCache.get(ctx, cacheKey, async () => {
+            // If not in cache, compute the permissions
+            const user = await this.connection.getEntityOrThrow(ctx, User, ctx.activeUserId, {
+                relations: ['roles', 'roles.channels'],
+            });
+            const userChannels = getUserChannelsPermissions(user);
+            const channel = userChannels.find(c => idsAreEqual(c.id, channelId));
+            if (!channel) {
+                return [];
+            }
+            return channel.permissions;
         });
-        const userChannels = getUserChannelsPermissions(user);
-        const channel = userChannels.find(c => idsAreEqual(c.id, channelId));
-        if (!channel) {
-            return [];
-        }
-        return channel.permissions;
     }
 
     async create(ctx: RequestContext, input: CreateRoleInput): Promise<Role> {
